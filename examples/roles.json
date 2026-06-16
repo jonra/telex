@@ -1,0 +1,18 @@
+{
+  "base": "http://127.0.0.1:4123",
+  "channel": "#protocol",
+  "workers": [
+    {
+      "name": "docs",
+      "prompt": "You own protocol documentation and review. Keep the schema authoritative and unambiguous."
+    },
+    {
+      "name": "firmware",
+      "prompt": "You own the ESP32 firmware side. Care about flash layout, BLE decoding, and what can be rendered on the ring screens."
+    },
+    {
+      "name": "app",
+      "prompt": "You own the phone app side. Care about the outbound BLE message encoding and haptics."
+    }
+  ]
+}

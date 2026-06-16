@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>telex · dashboard</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #161b22; --border: #2a313c; --fg: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --amber: #d29922;
+    --red: #f85149; --rowflash: #1f3a26; --selbg: #1f2a3d;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    --bg: #ffffff; --panel: #f3f5f8; --border: #d8dee6; --fg: #1f2328;
+    --muted: #656d76; --accent: #0969da; --green: #1a7f37; --amber: #9a6700;
+    --red: #cf222e; --rowflash: #dafbe1; --selbg: #ddf4ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 12px 18px;
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .08em; }
+  header h1 .dot { color: var(--green); }
+  .stat { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .stat b { color: var(--fg); }
+  .live { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .live .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); margin-right: 6px; vertical-align: middle; }
+  .pulse.flash { animation: flash .5s; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--green); } 100% { box-shadow: 0 0 0 8px transparent; } }
+  main { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 50px); }
+  aside { border-right: 1px solid var(--border); overflow-y: auto; padding: 14px; }
+  section { overflow-y: auto; padding: 14px 18px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted);
+    margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .item { padding: 6px 8px; border-radius: 6px; display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 13px; cursor: default; }
+  .item:hover { background: var(--panel); }
+  .item.sel { background: var(--selbg); }
+  .badge { font-size: 11px; color: var(--muted); }
+  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+  .led.on { background: var(--green); }
+  .led.wait { background: var(--amber); }
+  .led.blip { animation: blip .6s; }
+  @keyframes blip { 0% { transform: scale(2.2); background: var(--accent); } 100% { transform: scale(1); } }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--panel); vertical-align: top; }
+  tr.msg { cursor: pointer; }
+  tr.msg:hover { background: var(--panel); }
+  tr.msg.new td { animation: row .8s; }
+  @keyframes row { 0% { background: var(--rowflash); } 100% { background: transparent; } }
+  .who { color: var(--accent); } .to { color: var(--fg); }
+  .thread { color: var(--amber); } .chan { color: var(--green); }
+  .text { color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+  .filter { background: var(--panel); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 6px; padding: 6px 10px; font-family: var(--mono); font-size: 12px; width: 100%; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+  .clear { background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+  .theme-btn { background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 3px 9px; cursor: pointer; font-size: 12px; margin-left: 14px; }
+  .theme-btn:hover { color: var(--fg); border-color: var(--accent); }
+  .viz { display: flex; gap: 14px; margin-bottom: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; position: relative; }
+  .card .lbl { position: absolute; top: 9px; left: 13px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--muted); z-index: 1; }
+  .net-wrap { flex: 1; height: 230px; overflow: hidden; }
+  canvas#net { width: 100%; height: 100%; display: block; }
+  .spark-wrap { width: 210px; padding: 30px 14px 12px; display: flex; flex-direction: column; }
+  canvas#spark { width: 100%; height: 74px; display: block; margin: 6px 0 4px; }
+  .rate { font-family: var(--mono); font-size: 26px; color: var(--accent); line-height: 1; }
+  .rate small { font-size: 12px; color: var(--muted); }
+  .peak { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .control { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;
+    padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .ctl-label { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+  .control .filter { flex: 1; min-width: 120px; }
+  .ctl-btn { background: var(--accent); border: none; color: #fff; border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+  .ctl-btn:hover { filter: brightness(1.1); }
+  .ctl-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .task { padding: 6px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12px;
+    display: flex; align-items: center; gap: 6px; }
+  .task:hover { background: var(--panel); }
+  .tdot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .t-open { background: var(--accent); } .t-blocked { background: var(--muted); }
+  .t-claimed { background: var(--amber); } .t-done { background: var(--green); } .t-failed { background: var(--red); }
+  .task .tid { color: var(--muted); } .task .towner { color: var(--muted); margin-left: auto; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot">●</span> TELEX</h1>
+  <span class="stat">agents <b id="s-agents">0</b></span>
+  <span class="stat">channels <b id="s-chan">0</b></span>
+  <span class="stat">threads <b id="s-threads">0</b></span>
+  <span class="stat">messages <b id="s-msgs">0</b></span>
+  <span class="stat">uptime <b id="s-uptime">–</b></span>
+  <span class="live"><span class="pulse" id="pulse"></span><span id="live-text">connecting…</span></span>
+  <button class="theme-btn" id="theme" title="Toggle light/dark">☾ dark</button>
+</header>
+<main>
+  <aside>
+    <h2>Agents</h2>
+    <div id="agents"></div>
+    <h2>Channels</h2>
+    <div id="channels"></div>
+    <h2>Threads</h2>
+    <div id="threads"></div>
+    <h2>Tasks</h2>
+    <div id="tasks"></div>
+  </aside>
+  <section>
+    <div class="control">
+      <span class="ctl-label">⌘ supervisor</span>
+      <input id="bcast" class="filter" placeholder="broadcast to all agents…" />
+      <button class="ctl-btn" id="bcast-send">send</button>
+      <span class="ctl-sep"></span>
+      <input id="task-title" class="filter" style="max-width:200px" placeholder="new task title…" />
+      <input id="task-role" class="filter" style="max-width:120px" placeholder="role (optional)" />
+      <button class="ctl-btn" id="task-post">post task</button>
+    </div>
+    <div class="viz">
+      <div class="card net-wrap"><span class="lbl">network</span><canvas id="net"></canvas></div>
+      <div class="card spark-wrap">
+        <span class="lbl">throughput</span>
+        <canvas id="spark"></canvas>
+        <div class="rate"><span id="rate-n">0</span> <small>msg/s</small></div>
+        <div class="peak">peak <span id="rate-peak">0</span>/s · last 60s</div>
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
+      <input id="filter" class="filter" placeholder="filter messages — agent, #channel, thread, or text…" />
+      <button class="clear" id="clearfilter">clear</button>
+    </div>
+    <table>
+      <thead><tr><th style="width:90px">time</th><th style="width:120px">from → to</th><th style="width:130px">thread</th><th>message</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty">No messages yet. Connect agents and start sending.</div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let messages = [];
+let filter = "";
+let state = { agents: [], channels: [], threads: [], tasks: [], stats: {} }; // latest snapshot
+const ledFor = new Map(); // agent -> blip timeout
+
+function fmtTime(ts){ const d=new Date(ts); return d.toLocaleTimeString([], {hour12:false}); }
+function fmtUptime(s){ if(s==null) return "–"; const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+  return (h?h+"h ":"")+(m?m+"m ":"")+x+"s"; }
+
+async function loadState(){
+  let d;
+  try {
+    const r = await fetch("/api/state?limit=500");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    d = await r.json();
+  } catch(e){
+    $("live-text").textContent = "server unreachable — restart the daemon";
+    $("pulse").style.background = "var(--red)";
+    return;
+  }
+  state = d;
+  $("pulse").style.background = "var(--green)";
+  $("s-agents").textContent = d.agents.length;
+  $("s-chan").textContent = d.channels.length;
+  $("s-threads").textContent = d.threads.length;
+  $("s-msgs").textContent = d.stats.total_messages;
+  $("s-uptime").textContent = fmtUptime(d.uptime_seconds);
+  renderAgents(d.agents); renderChannels(d.channels); renderThreads(d.threads);
+  renderTasks(d.tasks || []);
+  messages = d.messages; renderRows();
+}
+
+function renderTasks(tasks){
+  if(!tasks.length){ $("tasks").innerHTML = '<div class="badge">none</div>'; return; }
+  $("tasks").innerHTML = tasks.map(t => `
+    <div class="task" title="${esc(t.detail||'')}">
+      <span class="tdot t-${t.status}"></span>
+      <span class="tid">#${t.id}</span>
+      <span>${esc(t.title)}</span>
+      <span class="towner">${t.owner?esc(t.owner):(t.role?'→'+esc(t.role):t.status)}</span>
+    </div>`).join("");
+}
+
+function renderAgents(agents){
+  $("agents").innerHTML = agents.map(a => `
+    <div class="item">
+      <span class="led ${a.waiting?'wait':'on'}" data-agent="${esc(a.name)}"></span>
+      <span class="who">${esc(a.name)}</span>
+      <span class="badge" style="margin-left:auto">${a.pending?('· '+a.pending+' queued'):''} ${a.idle_seconds}s</span>
+    </div>`).join("") || '<div class="badge">none</div>';
+}
+function renderChannels(chs){
+  $("channels").innerHTML = chs.map(c => `
+    <div class="item"><span class="chan">${esc(c.name)}</span>
+      <span class="badge" style="margin-left:auto">${c.members.length} member${c.members.length!==1?'s':''}</span></div>`).join("")
+    || '<div class="badge">none</div>';
+}
+function renderThreads(ts){
+  $("threads").innerHTML = ts.map(t => `
+    <div class="item" data-filter="${esc(t.name)}" style="cursor:pointer">
+      <span class="thread">${esc(t.name)}</span>
+      <span class="badge" style="margin-left:auto">${t.count}</span></div>`).join("")
+    || '<div class="badge">none</div>';
+  document.querySelectorAll('[data-filter]').forEach(el =>
+    el.onclick = () => { $("filter").value = el.dataset.filter; filter = el.dataset.filter.toLowerCase(); renderRows(); });
+}
+
+function matches(m){
+  if(!filter) return true;
+  return [m.from, m.to, m.channel, m.thread, m.text].filter(Boolean)
+    .some(v => String(v).toLowerCase().includes(filter));
+}
+function renderRows(newId){
+  const rows = messages.filter(matches);
+  $("empty").style.display = rows.length ? "none" : "block";
+  $("rows").innerHTML = rows.map(m => `
+    <tr class="msg ${m.id===newId?'new':''}">
+      <td class="badge">${fmtTime(m.ts)}</td>
+      <td><span class="who">${esc(m.from)}</span> → <span class="to">${esc(m.to)}</span></td>
+      <td class="thread">${m.thread?esc(m.thread):'<span class="badge">—</span>'}</td>
+      <td class="text">${esc(m.text)}</td>
+    </tr>`).join("");
+}
+function esc(s){ return String(s??"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function blip(agent){
+  document.querySelectorAll(`.led[data-agent="${CSS.escape(agent)}"]`).forEach(led => {
+    led.classList.add('blip'); clearTimeout(ledFor.get(agent));
+    ledFor.set(agent, setTimeout(()=>led.classList.remove('blip'), 600));
+  });
+  const p = $("pulse"); p.classList.add('flash'); setTimeout(()=>p.classList.remove('flash'), 500);
+}
+
+function connectSSE(){
+  const es = new EventSource("/api/events");
+  es.onopen = () => { $("live-text").textContent = "live"; };
+  es.onerror = () => { $("live-text").textContent = "reconnecting… (restart daemon if this persists)"; };
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if(ev.type === "message"){
+      messages.unshift(ev); if(messages.length>500) messages.pop();
+      blip(ev.from); (ev.recipients||[]).forEach(blip);
+      netFlow(ev); bumpRate();
+      renderRows(ev.id); loadStatsSoon();
+    } else if(ev.type === "join" || ev.type === "join_channel" || ev.type === "task"){
+      loadStatsSoon();
+    }
+  };
+}
+let statsTimer;
+function loadStatsSoon(){ clearTimeout(statsTimer); statsTimer = setTimeout(loadState, 250); }
+
+$("filter").addEventListener("input", e => { filter = e.target.value.toLowerCase(); renderRows(); });
+$("clearfilter").onclick = () => { $("filter").value=""; filter=""; renderRows(); };
+
+// Theme: persist choice; default follows OS preference.
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  $("theme").textContent = t === "light" ? "☀ light" : "☾ dark";
+}
+let theme = localStorage.getItem("telex-theme")
+  || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+applyTheme(theme);
+$("theme").onclick = () => { theme = theme === "light" ? "dark" : "light";
+  localStorage.setItem("telex-theme", theme); applyTheme(theme); };
+
+// Supervisor controls.
+async function post(url, body){
+  const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  return r.json();
+}
+function doBroadcast(){ const t=$("bcast").value.trim(); if(!t) return;
+  post("/api/control/broadcast", { text:t }).then(()=>{ $("bcast").value=""; loadStatsSoon(); }); }
+function doPostTask(){ const title=$("task-title").value.trim(); if(!title) return;
+  const role=$("task-role").value.trim()||undefined;
+  post("/api/control/task", { title, role }).then(()=>{ $("task-title").value=""; $("task-role").value=""; loadStatsSoon(); }); }
+$("bcast-send").onclick = doBroadcast;
+$("bcast").addEventListener("keydown", e => { if(e.key==="Enter") doBroadcast(); });
+$("task-post").onclick = doPostTask;
+$("task-title").addEventListener("keydown", e => { if(e.key==="Enter") doPostTask(); });
+
+// ---- Visuals: network graph + throughput sparkline -----------------------
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function fitCanvas(c){ const dpr = devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
+  if(c.width!==w*dpr||c.height!==h*dpr){ c.width=w*dpr; c.height=h*dpr; }
+  const ctx=c.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0); return {ctx,w,h}; }
+
+const net = { canvas: $("net"), nodes: new Map(), packets: [], pulses: new Map() };
+function nodePositions(w,h){
+  const names = state.agents.map(a=>a.name);
+  const cx=w/2, cy=h/2, R=Math.min(w,h)/2-46;
+  const pos=new Map();
+  names.forEach((n,i)=>{ const ang=-Math.PI/2 + (i/Math.max(names.length,1))*Math.PI*2;
+    pos.set(n, names.length===1?{x:cx,y:cy}:{x:cx+R*Math.cos(ang), y:cy+R*Math.sin(ang)}); });
+  return pos;
+}
+function netFlow(ev){
+  const color = ev.channel ? cssVar("--green") : (ev.to==="*" ? cssVar("--amber") : cssVar("--accent"));
+  (ev.recipients||[]).forEach(r=>{ net.packets.push({from:ev.from,to:r,t0:performance.now(),dur:850,color}); });
+  net.pulses.set(ev.from, performance.now());
+  (ev.recipients||[]).forEach(r=>net.pulses.set(r, performance.now()));
+}
+function drawNet(now){
+  const {ctx,w,h}=fitCanvas(net.canvas); ctx.clearRect(0,0,w,h);
+  const pos=nodePositions(w,h);
+  const border=cssVar("--border"), muted=cssVar("--muted"), green=cssVar("--green"),
+        amber=cssVar("--amber"), fg=cssVar("--fg");
+  // faint edges for in-flight packets
+  ctx.lineWidth=1;
+  net.packets.forEach(p=>{ const a=pos.get(p.from),b=pos.get(p.to); if(!a||!b)return;
+    ctx.strokeStyle=border; ctx.globalAlpha=.5; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); });
+  ctx.globalAlpha=1;
+  // nodes
+  state.agents.forEach(a=>{ const p=pos.get(a.name); if(!p)return;
+    const hot=(now-(net.pulses.get(a.name)||-1e9))<700;
+    const base = a.waiting?amber:green;
+    if(hot){ ctx.beginPath(); ctx.arc(p.x,p.y,16,0,7); ctx.fillStyle=base; ctx.globalAlpha=.18; ctx.fill(); ctx.globalAlpha=1; }
+    ctx.beginPath(); ctx.arc(p.x,p.y,hot?7:5.5,0,7); ctx.fillStyle=base; ctx.fill();
+    ctx.fillStyle=fg; ctx.font="12px ui-monospace,Menlo,monospace"; ctx.textAlign="center";
+    ctx.fillText(a.name, p.x, p.y+22); });
+  // packets
+  net.packets = net.packets.filter(p=>{ const t=(now-p.t0)/p.dur; if(t>=1)return false;
+    const a=pos.get(p.from),b=pos.get(p.to); if(!a||!b)return false;
+    const e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2; // easeInOut
+    const x=a.x+(b.x-a.x)*e, y=a.y+(b.y-a.y)*e;
+    ctx.beginPath(); ctx.arc(x,y,3.5,0,7); ctx.fillStyle=p.color; ctx.fill();
+    ctx.globalAlpha=.35; ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.fillStyle=p.color; ctx.fill(); ctx.globalAlpha=1;
+    return true; });
+  if(!state.agents.length){ ctx.fillStyle=muted; ctx.font="13px system-ui"; ctx.textAlign="center";
+    ctx.fillText("no agents connected", w/2, h/2); }
+}
+
+// throughput
+const rate = { bins: new Array(60).fill(0), cur: Math.floor(Date.now()/1000), peak: 0 };
+function bumpRate(){ const s=Math.floor(Date.now()/1000); shiftRate(s); rate.bins[59]++; }
+function shiftRate(s){ let d=s-rate.cur; if(d<=0)return; d=Math.min(d,60);
+  for(let i=0;i<d;i++) rate.bins.push(0); rate.bins.splice(0, d); rate.cur=s; }
+function drawSpark(){
+  shiftRate(Math.floor(Date.now()/1000));
+  const {ctx,w,h}=fitCanvas($("spark")); ctx.clearRect(0,0,w,h);
+  const max=Math.max(3,...rate.bins), accent=cssVar("--accent"), border=cssVar("--border");
+  ctx.strokeStyle=border; ctx.globalAlpha=.6; ctx.beginPath(); ctx.moveTo(0,h-1); ctx.lineTo(w,h-1); ctx.stroke(); ctx.globalAlpha=1;
+  ctx.beginPath();
+  rate.bins.forEach((v,i)=>{ const x=i/59*w, y=h-(v/max)*(h-4)-2; i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.strokeStyle=accent; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+  ctx.globalAlpha=.12; ctx.fillStyle=accent; ctx.fill(); ctx.globalAlpha=1;
+  const last=rate.bins[58]||0; rate.peak=Math.max(rate.peak,...rate.bins);
+  $("rate-n").textContent=last; $("rate-peak").textContent=rate.peak;
+}
+
+(function vizLoop(){ const now=performance.now(); drawNet(now); requestAnimationFrame(vizLoop); })();
+setInterval(drawSpark, 500);
+
+loadState(); connectSSE();
+setInterval(loadState, 5000);
+</script>
+</body>
+</html>

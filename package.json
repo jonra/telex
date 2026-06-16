@@ -1,0 +1,50 @@
+{
+  "name": "telex",
+  "version": "1.1.0",
+  "description": "A duplex message broker MCP server that lets any number of agents (e.g. Claude Code sessions) talk to each other — with a live web dashboard and terminal UI.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Jon Rasmussen",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "agents",
+    "message-broker",
+    "ipc",
+    "multi-agent"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "telex": "server.js",
+    "telex-top": "tui.js"
+  },
+  "files": [
+    "server.js",
+    "tui.js",
+    "harness/",
+    "examples/",
+    "public/"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "tui": "node tui.js",
+    "workflow": "node harness/run.js",
+    "launch": "node harness/launch.js",
+    "test": "node test.mjs",
+    "test:harness": "node harness/selftest.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/USER/telex.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.21.2",
+    "zod": "^3.23.8"
+  }
+}

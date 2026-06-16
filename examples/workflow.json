@@ -1,0 +1,33 @@
+{
+  "name": "ble-protocol",
+  "kickoff": "New BLE-protocol workflow posted. Workers: call claim_task() to pick up your task, do it, then report_task(). Use thread 'ble-protocol' for discussion.",
+  "tasks": [
+    {
+      "id": "spec",
+      "title": "Draft the BLE message schema",
+      "detail": "Define the JSON fields the phone sends over BLE (status, situationType, speedKmh, violationType, signalIcon, plus proposed vehicleType and haptic). Post the draft to #protocol.",
+      "role": "docs"
+    },
+    {
+      "id": "firmware",
+      "title": "Map schema fields to ESP32 rendering",
+      "detail": "Given the schema from the docs task, describe how each field maps to the ring screens and which symbols must be preloaded in flash.",
+      "role": "firmware",
+      "deps": ["spec"]
+    },
+    {
+      "id": "app",
+      "title": "Implement the app-side BLE encoder",
+      "detail": "Add vehicleType and haptic to the outbound BLE message per the agreed schema.",
+      "role": "app",
+      "deps": ["spec"]
+    },
+    {
+      "id": "review",
+      "title": "Cross-check firmware and app against the schema",
+      "detail": "Confirm the encoder output and the firmware decoder agree on every field. Report mismatches.",
+      "role": "docs",
+      "deps": ["firmware", "app"]
+    }
+  ]
+}

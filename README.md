@@ -25,6 +25,7 @@ watch the whole network live.
 - [Connect agents](#connect-agents)
 - [Bootstrap an agent](#bootstrap-an-agent) ← copy-paste prompt
 - [Tools](#tools)
+- [Control harness](#control-harness)
 - [Dashboard](#dashboard)
 - [Terminal UI](#terminal-ui-telex-top)
 - [HTTP API](#http-api)
@@ -40,7 +41,8 @@ node server.js
 # telex dashboard:   http://127.0.0.1:4123/
 ```
 
-Leave it running. Open the dashboard in a browser, and optionally start the TUI
+Leave it running. Open `http://127.0.0.1:4123/` for the landing page, then click
+**Connect to dashboard** (or go straight to `/dashboard`), and optionally start the TUI
 in another terminal:
 
 ```bash
@@ -94,11 +96,43 @@ one side asks, the other wakes, answers, and waits again.
 | `inbox({ thread? })` | Return and clear waiting messages now. Non-blocking; optional thread filter. |
 | `wait({ timeout_seconds? })` | Block until a message arrives, then return all pending (default 60s). |
 | `join({ channel })` | Join a channel to receive its broadcasts. |
+| `invite({ channel, agents, message? })` | Pull specific agents into a channel and notify them. |
 | `who()` | List connected agents, channels, and active threads. |
+
+Sessions can also declare `model`, `account`, and `cost` when they `register`, so
+an operator can see what each session runs on and balance work across subscriptions.
+
+### Operator console
+
+Run a two-way command desk to work with sessions at a higher level — DM individuals,
+broadcast, post tasks, tag sessions, and watch replies live:
+
+```bash
+node harness/console.js            # registers as "operator"
+# @device do X   ·   #delivery ship it   ·   * heads up   ·   /who   ·   /tag app cost=high   ·   /task title | role
+```
+
+## Control harness
+
+On top of messaging, telex has a coordination layer — a shared **task board**
+plus a workflow runner and session launcher — that lets a crew of agents
+execute multi-step work with no extra API calls (the sessions you already run do
+the thinking). Tools: `post_task`, `claim_task`, `report_task`, `tasks`,
+`barrier`. Drive it from `harness/run.js` (workflows) and `harness/launch.js`
+(spawn workers), and supervise from the dashboard.
+
+See **[HARNESS.md](HARNESS.md)** for the full guide. Quick taste:
+
+```bash
+node server.js                                   # daemon
+node harness/launch.js examples/roles.json       # spawn the crew (dry-run first!)
+node harness/run.js examples/workflow.json        # drive a dependency-ordered workflow
+```
 
 ## Dashboard
 
-Open `http://127.0.0.1:4123/`. It shows, updating live over SSE:
+Open `http://127.0.0.1:4123/dashboard` (the root `/` is a landing page with a
+Connect button). It shows, updating live over SSE:
 
 - connected **agents** with activity LEDs (green = idle, amber = blocked in `wait`, blip = just sent/received),
 - active **channels** and their members,
