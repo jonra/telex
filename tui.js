@@ -130,7 +130,11 @@ async function streamEvents() {
           const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
           const data = chunk.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("");
           if (!data) continue;
-          try { const ev = JSON.parse(data); if (ev.type && ev.type !== "hello") { pushFeed(ev); poll(); } } catch {}
+          try {
+            const ev = JSON.parse(data);
+            if (ev.type === "reset") { feed.length = 0; hot.clear(); poll(); }
+            else if (ev.type && ev.type !== "hello") { pushFeed(ev); poll(); }
+          } catch {}
         }
       }
     } catch { connected = false; }

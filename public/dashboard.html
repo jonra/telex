@@ -4,25 +4,36 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>telex · dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+  /* Sloth Mint brand — light mode default */
   :root {
-    --bg: #0e1117; --panel: #161b22; --border: #2a313c; --fg: #e6edf3;
-    --muted: #8b949e; --accent: #58a6ff; --green: #3fb950; --amber: #d29922;
-    --red: #f85149; --rowflash: #1f3a26; --selbg: #1f2a3d;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #F7F8FA; --panel: #FFFFFF; --border: #E5E7EB; --fg: #0A0A0A;
+    --muted: #64748B; --accent: #0FA968; --mint: #22D88F; --green: #0FA968;
+    --amber: #D97706; --red: #DC2626; --rowflash: #E8FBF2; --selbg: #E8FBF2;
+    --on-mint: #0A0A0A;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   }
-  :root[data-theme="light"] {
-    --bg: #ffffff; --panel: #f3f5f8; --border: #d8dee6; --fg: #1f2328;
-    --muted: #656d76; --accent: #0969da; --green: #1a7f37; --amber: #9a6700;
-    --red: #cf222e; --rowflash: #dafbe1; --selbg: #ddf4ff;
+  :root[data-theme="dark"] {
+    --bg: #0A0A0A; --panel: #161616; --border: #2A2A2A; --fg: #F7F8FA;
+    --muted: #94A3B8; --accent: #22D88F; --mint: #22D88F; --green: #22D88F;
+    --amber: #F59E0B; --red: #F87171; --rowflash: #054E2F; --selbg: #0B2A1E;
+    --on-mint: #0A0A0A;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
-    font: 14px/1.5 system-ui, sans-serif; }
-  header { display: flex; align-items: baseline; gap: 16px; padding: 12px 18px;
-    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .08em; }
-  header h1 .dot { color: var(--green); }
+    font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 18px;
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  .brand { display: flex; align-items: center; gap: 9px; }
+  .brand .disk { width: 26px; height: 26px; border-radius: 50%; background: var(--mint);
+    display: grid; place-items: center; font-weight: 800; color: #0A0A0A; font-size: 15px; }
+  .brand .wm { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+  .brand .tag { background: #0A0A0A; color: #fff; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .12em; padding: 2px 7px; border-radius: 5px; }
   .stat { color: var(--muted); font-family: var(--mono); font-size: 12px; }
   .stat b { color: var(--fg); }
   .live { margin-left: auto; font-size: 12px; color: var(--muted); }
@@ -57,8 +68,9 @@
   .who { color: var(--accent); } .to { color: var(--fg); }
   .thread { color: var(--amber); } .chan { color: var(--green); }
   .text { color: var(--fg); white-space: pre-wrap; word-break: break-word; }
-  .filter { background: var(--panel); border: 1px solid var(--border); color: var(--fg);
-    border-radius: 6px; padding: 6px 10px; font-family: var(--mono); font-size: 12px; width: 100%; }
+  .filter { background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+    border-radius: 8px; padding: 7px 11px; font-family: var(--mono); font-size: 12px; width: 100%; }
+  .filter:focus { outline: none; border-color: var(--mint); box-shadow: 0 0 0 4px var(--rowflash); }
   .empty { color: var(--muted); padding: 30px; text-align: center; }
   .clear { background: none; border: 1px solid var(--border); color: var(--muted);
     border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
@@ -66,7 +78,8 @@
     border-radius: 6px; padding: 3px 9px; cursor: pointer; font-size: 12px; margin-left: 14px; }
   .theme-btn:hover { color: var(--fg); border-color: var(--accent); }
   .viz { display: flex; gap: 14px; margin-bottom: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; position: relative; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; position: relative;
+    box-shadow: 0 1px 2px rgba(10,10,10,0.04); }
   .card .lbl { position: absolute; top: 9px; left: 13px; font-size: 11px; text-transform: uppercase;
     letter-spacing: .1em; color: var(--muted); z-index: 1; }
   .net-wrap { flex: 1; height: 230px; overflow: hidden; }
@@ -77,13 +90,16 @@
   .rate small { font-size: 12px; color: var(--muted); }
   .peak { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
   .control { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;
-    padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-  .ctl-label { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+    padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(10,10,10,0.04); }
+  .ctl-label { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; font-weight: 600; }
   .control .filter { flex: 1; min-width: 120px; }
-  .ctl-btn { background: var(--accent); border: none; color: #fff; border-radius: 6px;
-    padding: 6px 12px; cursor: pointer; font-size: 12px; white-space: nowrap; }
-  .ctl-btn:hover { filter: brightness(1.1); }
+  .ctl-btn { background: var(--mint); border: none; color: var(--on-mint); border-radius: 8px;
+    padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .ctl-btn:hover { background: var(--green); color: #fff; }
   .ctl-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+  .ctl-btn.danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+  .ctl-btn.danger:hover { background: var(--red); color: #fff; filter: none; }
   .task { padding: 6px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12px;
     display: flex; align-items: center; gap: 6px; }
   .task:hover { background: var(--panel); }
@@ -95,7 +111,7 @@
 </head>
 <body>
 <header>
-  <h1><span class="dot">●</span> TELEX</h1>
+  <span class="brand"><span class="disk">t</span><span class="wm">telex</span><span class="tag">Dashboard</span></span>
   <span class="stat">agents <b id="s-agents">0</b></span>
   <span class="stat">channels <b id="s-chan">0</b></span>
   <span class="stat">threads <b id="s-threads">0</b></span>
@@ -124,6 +140,8 @@
       <input id="task-title" class="filter" style="max-width:200px" placeholder="new task title…" />
       <input id="task-role" class="filter" style="max-width:120px" placeholder="role (optional)" />
       <button class="ctl-btn" id="task-post">post task</button>
+      <span class="ctl-sep"></span>
+      <button class="ctl-btn danger" id="reset" title="Clear all agents, channels, tasks and messages">reset</button>
     </div>
     <div class="viz">
       <div class="card net-wrap"><span class="lbl">network</span><canvas id="net"></canvas></div>
@@ -251,7 +269,9 @@ function connectSSE(){
       blip(ev.from); (ev.recipients||[]).forEach(blip);
       netFlow(ev); bumpRate();
       renderRows(ev.id); loadStatsSoon();
-    } else if(ev.type === "join" || ev.type === "join_channel" || ev.type === "task"){
+    } else if(ev.type === "reset"){
+      messages = []; renderRows(); loadStatsSoon();
+    } else if(ev.type === "join" || ev.type === "join_channel" || ev.type === "task" || ev.type === "tag"){
       loadStatsSoon();
     }
   };
@@ -267,8 +287,7 @@ function applyTheme(t){
   document.documentElement.setAttribute("data-theme", t);
   $("theme").textContent = t === "light" ? "☀ light" : "☾ dark";
 }
-let theme = localStorage.getItem("telex-theme")
-  || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+let theme = localStorage.getItem("telex-theme") || "light";
 applyTheme(theme);
 $("theme").onclick = () => { theme = theme === "light" ? "dark" : "light";
   localStorage.setItem("telex-theme", theme); applyTheme(theme); };
@@ -287,6 +306,11 @@ $("bcast-send").onclick = doBroadcast;
 $("bcast").addEventListener("keydown", e => { if(e.key==="Enter") doBroadcast(); });
 $("task-post").onclick = doPostTask;
 $("task-title").addEventListener("keydown", e => { if(e.key==="Enter") doPostTask(); });
+$("reset").onclick = () => {
+  if(confirm("Reset telex? This clears all agents, channels, tasks and messages.")){
+    post("/api/control/reset", {}).then(()=>{ messages=[]; renderRows(); loadState(); });
+  }
+};
 
 // ---- Visuals: network graph + throughput sparkline -----------------------
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();

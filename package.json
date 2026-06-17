@@ -35,6 +35,8 @@
     "tui": "node tui.js",
     "workflow": "node harness/run.js",
     "launch": "node harness/launch.js",
+    "console": "node harness/console.js",
+    "reset": "node harness/reset.js",
     "test": "node test.mjs",
     "test:harness": "node harness/selftest.mjs"
   },

@@ -90,6 +90,24 @@ const broker = {
     return this.agents.get(name);
   },
 
+  // Wipe state to start clean. Keeps SSE observers (dashboard/TUI) connected and
+  // tells them to refresh. By default also clears the roster; pass keepAgents to
+  // leave currently-known agents in place (queues are cleared either way).
+  reset({ keepAgents = false } = {}) {
+    this.tasks.clear();
+    this.channels.clear();
+    this.barriers.clear();
+    this.history = [];
+    this.seq = 0;
+    this.taskSeq = 0;
+    if (keepAgents) {
+      for (const a of this.agents.values()) a.queue = [];
+    } else {
+      this.agents.clear();
+    }
+    this.emit({ type: "reset", ts: new Date().toISOString() });
+  },
+
   // Attach operator metadata (model, account/subscription, cost tier, free note).
   tag(name, meta) {
     const a = this.ensure(name);
@@ -655,6 +673,13 @@ app.post("/api/control/broadcast", (req, res) => {
   const recipients = broker.route({ from: "supervisor", to: to || "*", text });
   log(`⌘ supervisor → ${to || "*"}: ${String(text).slice(0, 60)}`);
   res.json({ ok: true, recipients });
+});
+
+app.post("/api/control/reset", (req, res) => {
+  const keepAgents = !!(req.body && req.body.keepAgents);
+  broker.reset({ keepAgents });
+  log(`⌘ supervisor reset the network${keepAgents ? " (kept agents)" : ""}`);
+  res.json({ ok: true, keepAgents });
 });
 
 app.post("/api/control/invite", (req, res) => {

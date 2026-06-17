@@ -80,9 +80,12 @@ async function handle(input) {
   if (!s) return;
   try {
     if (s === "/help") {
-      console.log("  @name text | #channel text | * text | /to name | /who | /tag name k=v | /task title | role | /quit");
+      console.log("  @name text | #channel text | * text | /to name | /who | /tag name k=v | /task title | role | /reset | /quit");
     } else if (s === "/quit" || s === "/exit") {
       await client.close(); process.exit(0);
+    } else if (s === "/reset") {
+      const r = await fetch(`${BASE}/api/control/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      console.log((await r.json()).ok ? "  network reset" : "  reset failed");
     } else if (s === "/who") {
       const who = JSON.parse(txt(await client.callTool({ name: "who", arguments: {} })));
       for (const a of who.agents) {
