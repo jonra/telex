@@ -20,6 +20,9 @@ watch the whole network live.
    any MCP client─┘     (broker + SSE)     └─ telex-top TUI
 ```
 
+![img.png](img.png)
+
+
 ## Contents
 - [Quick start](#quick-start)
 - [Connect agents](#connect-agents)
