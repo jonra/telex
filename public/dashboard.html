@@ -107,6 +107,24 @@
   .t-open { background: var(--accent); } .t-blocked { background: var(--muted); }
   .t-claimed { background: var(--amber); } .t-done { background: var(--green); } .t-failed { background: var(--red); }
   .task .tid { color: var(--muted); } .task .towner { color: var(--muted); margin-left: auto; font-size: 11px; }
+  .sig { display: flex; align-items: center; gap: 8px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; }
+  .sig-topic { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sig-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .sig-bar span { display: block; height: 100%; border-radius: 3px; transition: width .3s; }
+  .sig-net { flex: none; color: var(--muted); width: 34px; text-align: right; }
+  .proj { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12px; }
+  .proj:hover { background: var(--panel); }
+  .pname { color: var(--fg); }
+  .pmode { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px;
+    border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .pm-hierarchy { color: var(--accent); border-color: var(--accent); }
+  .pm-pipeline { color: var(--green); border-color: var(--green); }
+  .pm-auction { color: var(--amber); border-color: var(--amber); }
+  .pm-stigmergy { color: #7C5CFC; border-color: #7C5CFC; }
+  .pgroup { margin-bottom: 8px; }
+  .pgroup-h { display: block; font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted); padding: 2px 8px; margin-top: 4px;
+    border-left: 2px solid var(--mint); }
 </style>
 </head>
 <body>
@@ -122,6 +140,8 @@
 </header>
 <main>
   <aside>
+    <h2>Projects</h2>
+    <div id="projects"></div>
     <h2>Agents</h2>
     <div id="agents"></div>
     <h2>Channels</h2>
@@ -130,6 +150,8 @@
     <div id="threads"></div>
     <h2>Tasks</h2>
     <div id="tasks"></div>
+    <h2>Signals</h2>
+    <div id="signals"></div>
   </aside>
   <section>
     <div class="control">
@@ -140,6 +162,16 @@
       <input id="task-title" class="filter" style="max-width:200px" placeholder="new task title…" />
       <input id="task-role" class="filter" style="max-width:120px" placeholder="role (optional)" />
       <button class="ctl-btn" id="task-post">post task</button>
+      <span class="ctl-sep"></span>
+      <input id="proj-name" class="filter" style="max-width:150px" placeholder="new project name…" />
+      <select id="proj-mode" class="filter" style="max-width:130px" title="Agent structure this project enforces">
+        <option value="anarchy">anarchy</option>
+        <option value="hierarchy">hierarchy</option>
+        <option value="pipeline">pipeline</option>
+        <option value="auction">auction</option>
+        <option value="stigmergy">stigmergy</option>
+      </select>
+      <button class="ctl-btn" id="proj-create">create</button>
       <span class="ctl-sep"></span>
       <button class="ctl-btn danger" id="reset" title="Clear all agents, channels, tasks and messages">reset</button>
     </div>
@@ -192,11 +224,43 @@ async function loadState(){
   $("s-threads").textContent = d.threads.length;
   $("s-msgs").textContent = d.stats.total_messages;
   $("s-uptime").textContent = fmtUptime(d.uptime_seconds);
+  renderProjects(d.projects || []);
   renderAgents(d.agents); renderChannels(d.channels); renderThreads(d.threads);
   renderTasks(d.tasks || []);
+  renderSignals(d.signals || []);
   messages = d.messages; renderRows();
 }
 
+function renderSignals(sigs){
+  if(!sigs.length){ $("signals").innerHTML = '<div class="badge">none</div>'; return; }
+  const max = Math.max(1, ...sigs.map(s => Math.abs(s.net)));
+  $("signals").innerHTML = sigs.map(s => {
+    const pct = Math.min(100, Math.abs(s.net)/max*100);
+    const col = s.net >= 0 ? "var(--mint)" : "var(--red)";
+    return `<div class="sig" title="activate ${s.activate} · inhibit ${s.inhibit}">
+      <span class="sig-topic">${esc(s.topic)}</span>
+      <span class="sig-bar"><span style="width:${pct}%;background:${col}"></span></span>
+      <span class="sig-net">${s.net>=0?'+':''}${s.net.toFixed(1)}</span></div>`;
+  }).join("");
+}
+
+const MODE_DESC = {
+  anarchy: "Anarchy — anyone claims any task (the default).",
+  hierarchy: "Hierarchy — tasks are role-gated; only the named worker may claim.",
+  pipeline: "Pipeline — tasks run in dependency order (DAG).",
+  auction: "Auction — work goes to the awarded (cheapest) bidder.",
+  stigmergy: "Stigmergy — swarm coordinates through decaying signals.",
+};
+function renderProjects(projs){
+  if(!projs.length){ $("projects").innerHTML = '<div class="badge">none</div>'; return; }
+  $("projects").innerHTML = projs.map(p => {
+    const s = p.task_stats || {};
+    return `<div class="proj" title="${esc(MODE_DESC[p.mode]||p.mode)}">
+      <span class="pname">${esc(p.name)}</span>
+      <span class="pmode pm-${esc(p.mode)}">${esc(p.mode)}</span>
+      <span class="badge" style="margin-left:auto">${s.done||0}/${s.total||0}</span></div>`;
+  }).join("");
+}
 function renderTasks(tasks){
   if(!tasks.length){ $("tasks").innerHTML = '<div class="badge">none</div>'; return; }
   $("tasks").innerHTML = tasks.map(t => `
@@ -209,12 +273,23 @@ function renderTasks(tasks){
 }
 
 function renderAgents(agents){
-  $("agents").innerHTML = agents.map(a => `
-    <div class="item">
-      <span class="led ${a.waiting?'wait':'on'}" data-agent="${esc(a.name)}"></span>
-      <span class="who">${esc(a.name)}</span>
-      <span class="badge" style="margin-left:auto">${a.pending?('· '+a.pending+' queued'):''} ${a.idle_seconds}s</span>
-    </div>`).join("") || '<div class="badge">none</div>';
+  if(!agents.length){ $("agents").innerHTML = '<div class="badge">none</div>'; return; }
+  // group agents by the project they belong to (default first)
+  const groups = {};
+  for(const a of agents){ (groups[a.project||'default'] ||= []).push(a); }
+  const names = Object.keys(groups).sort((x,y)=> x==='default'?-1 : y==='default'?1 : x.localeCompare(y));
+  $("agents").innerHTML = names.map(proj => {
+    const rows = groups[proj].map(a => {
+      const m = a.meta||{}; const sub = [m.model, m.cost && '$'+m.cost].filter(Boolean).join(' ');
+      return `<div class="item">
+        <span class="led ${a.waiting?'wait':'on'}" data-agent="${esc(a.name)}"></span>
+        <span class="who">${esc(a.name)}</span>
+        ${sub?`<span class="badge">${esc(sub)}</span>`:''}
+        <span class="badge" style="margin-left:auto">${a.pending?('· '+a.pending+' q'):''} ${a.idle_seconds}s</span>
+      </div>`;
+    }).join("");
+    return `<div class="pgroup"><span class="pgroup-h">${esc(proj)}</span>${rows}</div>`;
+  }).join("");
 }
 function renderChannels(chs){
   $("channels").innerHTML = chs.map(c => `
@@ -271,7 +346,7 @@ function connectSSE(){
       renderRows(ev.id); loadStatsSoon();
     } else if(ev.type === "reset"){
       messages = []; renderRows(); loadStatsSoon();
-    } else if(ev.type === "join" || ev.type === "join_channel" || ev.type === "task" || ev.type === "tag"){
+    } else if(ev.type === "join" || ev.type === "join_channel" || ev.type === "task" || ev.type === "tag" || ev.type === "signal" || ev.type === "project" || ev.type === "membership"){
       loadStatsSoon();
     }
   };
@@ -294,7 +369,15 @@ $("theme").onclick = () => { theme = theme === "light" ? "dark" : "light";
 
 // Supervisor controls.
 async function post(url, body){
-  const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  let r;
+  try { r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) }); }
+  catch(e){ alert("Can't reach the telex daemon — is it running?"); throw e; }
+  if(!r.ok){
+    alert(r.status === 404
+      ? "This control isn't in the running daemon. Restart it (Ctrl-C then `node server.js`) to pick up new endpoints."
+      : `Request failed (${r.status}).`);
+    throw new Error("HTTP "+r.status);
+  }
   return r.json();
 }
 function doBroadcast(){ const t=$("bcast").value.trim(); if(!t) return;
@@ -306,6 +389,11 @@ $("bcast-send").onclick = doBroadcast;
 $("bcast").addEventListener("keydown", e => { if(e.key==="Enter") doBroadcast(); });
 $("task-post").onclick = doPostTask;
 $("task-title").addEventListener("keydown", e => { if(e.key==="Enter") doPostTask(); });
+function doCreateProject(){ const name=$("proj-name").value.trim(); if(!name) return;
+  post("/api/control/project", { name, mode:$("proj-mode").value })
+    .then(()=>{ $("proj-name").value=""; loadStatsSoon(); }); }
+$("proj-create").onclick = doCreateProject;
+$("proj-name").addEventListener("keydown", e => { if(e.key==="Enter") doCreateProject(); });
 $("reset").onclick = () => {
   if(confirm("Reset telex? This clears all agents, channels, tasks and messages.")){
     post("/api/control/reset", {}).then(()=>{ messages=[]; renderRows(); loadState(); });

@@ -7,3 +7,15 @@ npm-debug.log*
 dist/
 coverage/
 *.tgz
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

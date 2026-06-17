@@ -21,6 +21,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 const PORT = Number(process.env.TELEX_PORT || 4123);
 const HOST = process.env.TELEX_HOST || "127.0.0.1";
 const HISTORY_MAX = Number(process.env.TELEX_HISTORY || 1000);
+const SIGNAL_HALFLIFE_MS = Number(process.env.TELEX_SIGNAL_HALFLIFE || 30000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const startedAt = Date.now();
 
@@ -79,15 +80,26 @@ const broker = {
   subscribers: new Set(),// SSE response objects for live events
   tasks: new Map(),      // id -> task (control harness board)
   barriers: new Map(),   // label -> { parties, arrived:Set, waiters:[] }
+  signals: new Map(),    // "projecttopic" -> { project, topic, activate, inhibit, updatedAt }
+  projects: new Map(),   // name -> { name, phases:[{name,mode}], current, status, createdAt }
   seq: 0,
   taskSeq: 0,
 
   ensure(name) {
     if (!this.agents.has(name)) {
-      this.agents.set(name, { queue: [], waiters: [], lastSeen: Date.now(), joinedAt: Date.now(), meta: {} });
+      this.agents.set(name, { queue: [], waiters: [], lastSeen: Date.now(), joinedAt: Date.now(), meta: {}, project: "default" });
       this.emit({ type: "join", agent: name, ts: new Date().toISOString() });
     }
     return this.agents.get(name);
+  },
+
+  setAgentProject(name, project) {
+    const a = this.ensure(name);
+    if (a.project !== project) {
+      a.project = project;
+      this.emit({ type: "membership", agent: name, project, ts: new Date().toISOString() });
+    }
+    return a.project;
   },
 
   // Wipe state to start clean. Keeps SSE observers (dashboard/TUI) connected and
@@ -97,6 +109,8 @@ const broker = {
     this.tasks.clear();
     this.channels.clear();
     this.barriers.clear();
+    this.signals.clear();
+    this.projects.clear();
     this.history = [];
     this.seq = 0;
     this.taskSeq = 0;
@@ -114,6 +128,54 @@ const broker = {
     a.meta = { ...a.meta, ...meta };
     this.emit({ type: "tag", agent: name, meta: a.meta, ts: new Date().toISOString() });
     return a.meta;
+  },
+
+  // ---- Stigmergic signal substrate ----------------------------------------
+  // Signals are pheromone-like marks in a shared medium. They decay over time
+  // (evaporation) so stale information fades. "activate" reinforces a path,
+  // "inhibit" suppresses it (cross-inhibition). Agents read only the topics
+  // they care about (rolling attention) and act on thresholds / net balance.
+  _decay(sig, now) {
+    const factor = Math.pow(0.5, (now - sig.updatedAt) / SIGNAL_HALFLIFE_MS);
+    sig.activate *= factor;
+    sig.inhibit *= factor;
+    sig.updatedAt = now;
+    return sig;
+  },
+
+  _sigKey(project, topic) { return `${project}${topic}`; },
+
+  emitSignal(from, project, topic, strength = 1, kind = "activate") {
+    const now = Date.now();
+    const key = this._sigKey(project, topic);
+    const sig = this.signals.get(key) || { project, topic, activate: 0, inhibit: 0, updatedAt: now };
+    this._decay(sig, now);
+    if (kind === "inhibit") sig.inhibit += strength;
+    else sig.activate += strength;
+    this.signals.set(key, sig);
+    const net = sig.activate - sig.inhibit;
+    this.emit({ type: "signal", from, project, topic, kind, activate: +sig.activate.toFixed(3), inhibit: +sig.inhibit.toFixed(3), net: +net.toFixed(3), ts: new Date().toISOString() });
+    return { project, topic, activate: sig.activate, inhibit: sig.inhibit, net };
+  },
+
+  readSignals(project, topicFilter) {
+    const now = Date.now();
+    const out = [];
+    for (const [key, sig] of this.signals) {
+      this._decay(sig, now);
+      if (sig.activate < 0.01 && sig.inhibit < 0.01) { this.signals.delete(key); continue; } // prune (evaporated)
+      if (project && sig.project !== project) continue;
+      if (topicFilter && sig.topic !== topicFilter) continue;
+      out.push({ project: sig.project, topic: sig.topic, activate: +sig.activate.toFixed(3), inhibit: +sig.inhibit.toFixed(3), net: +(sig.activate - sig.inhibit).toFixed(3) });
+    }
+    return out.sort((a, b) => b.net - a.net);
+  },
+
+  signalBalance(project, topic) {
+    const s = this.signals.get(this._sigKey(project, topic));
+    if (!s) return 0;
+    this._decay(s, Date.now());
+    return +(s.activate - s.inhibit).toFixed(3);
   },
 
   touch(name) {
@@ -196,6 +258,7 @@ const broker = {
       pending: a.queue.length,
       waiting: a.waiters.length > 0,
       idle_seconds: Math.round((now - a.lastSeen) / 1000),
+      project: a.project || "default",
       meta: a.meta || {},
     }));
   },
@@ -220,23 +283,64 @@ const broker = {
     }));
   },
 
-  // ---- Control harness: task board ----------------------------------------
+  // ---- Projects: each carries one agent structure (pattern), enforced ------
+  // A project has a single mode that governs how its tasks may be claimed.
+  // The default project is "default" in "anarchy" mode (anyone, any task).
+  MODES: ["anarchy", "hierarchy", "pipeline", "auction", "stigmergy"],
+
+  ensureProject(name = "default") {
+    if (!this.projects.has(name)) {
+      this.projects.set(name, { name, mode: "anarchy", status: "active", createdAt: new Date().toISOString() });
+    }
+    return this.projects.get(name);
+  },
+
+  createProject(name, mode) {
+    const m = this.MODES.includes(mode) ? mode : "anarchy";
+    const proj = { name, mode: m, status: "active", createdAt: new Date().toISOString() };
+    this.projects.set(name, proj);
+    this.emit({ type: "project", action: "create", project: this.projectInfo(proj), ts: proj.createdAt });
+    log(`◆ project "${name}" created with "${m}" structure`);
+    return proj;
+  },
+
+  // Claim rules per pattern. anarchy: anyone (respecting role addressing).
+  // hierarchy: must be the named role. auction: must have been awarded.
+  // pipeline: ordering comes from task deps. stigmergy: anyone (signal-driven).
+  modeAllows(mode, task, name) {
+    if (mode === "hierarchy") return task.role != null && task.role === name;
+    if (mode === "auction") return task.awardedTo === name;
+    return task.role == null || task.role === name; // anarchy, pipeline, stigmergy
+  },
+
+  projectInfo(proj) {
+    const tasks = [...this.tasks.values()].filter((t) => t.project === proj.name);
+    const stats = { open: 0, blocked: 0, claimed: 0, done: 0, failed: 0, total: tasks.length };
+    for (const t of tasks) stats[t.status] = (stats[t.status] || 0) + 1;
+    return { name: proj.name, mode: proj.mode, status: proj.status, task_stats: stats };
+  },
+
+  projectList() { return [...this.projects.values()].map((p) => this.projectInfo(p)); },
+
+  // ---- Task board (project- and phase-aware) -------------------------------
   depsSatisfied(task) {
     return (task.deps || []).every((id) => this.tasks.get(id)?.status === "done");
   },
 
-  postTask({ from, title, detail, role, deps }) {
+  postTask({ from, title, detail, role, deps, project = "default" }) {
+    this.ensureProject(project);
     const id = ++this.taskSeq;
     const now = new Date().toISOString();
     const task = {
       id, title, detail: detail || "", role: role || null, deps: (deps || []).map(Number),
+      project, awardedTo: null,
       status: "open", owner: null, result: null, from: from || "supervisor",
       createdAt: now, updatedAt: now,
     };
     if (!this.depsSatisfied(task)) task.status = "blocked";
     this.tasks.set(id, task);
     this.emit({ type: "task", action: "post", task, ts: now });
-    log(`▸ task #${id} "${title}"${task.role ? ` for ${task.role}` : ""}${task.status === "blocked" ? " (blocked)" : ""}`);
+    log(`▸ task #${id} "${title}" [${project}]${task.role ? ` for ${task.role}` : ""}`);
     return task;
   },
 
@@ -249,19 +353,35 @@ const broker = {
     }
   },
 
-  claimTask(name, id) {
+  awardTask(id, agent) {
+    const task = this.tasks.get(Number(id));
+    if (!task) throw new Error(`No task #${id}`);
+    task.awardedTo = agent; task.updatedAt = new Date().toISOString();
+    this.emit({ type: "task", action: "award", task, ts: task.updatedAt });
+    log(`⚑ task #${id} awarded to ${agent}`);
+    return task;
+  },
+
+  claimTask(name, id, project = "default") {
+    const proj = this.ensureProject(project);
+    const mode = proj.mode;
     let task;
     if (id != null) {
       task = this.tasks.get(Number(id));
       if (!task) throw new Error(`No task #${id}`);
+      if (task.project !== project) throw new Error(`Task #${id} is in project "${task.project}", not "${project}"`);
       if (task.status !== "open") throw new Error(`Task #${id} is ${task.status}, not open`);
+      if (!this.depsSatisfied(task)) throw new Error(`Task #${id} has unmet dependencies`);
+      if (!this.modeAllows(mode, task, name)) throw new Error(`Task #${id} not claimable by ${name} under "${mode}" mode`);
     } else {
       task = [...this.tasks.values()].find(
-        (t) => t.status === "open" && (t.role === null || t.role === name) && this.depsSatisfied(t)
+        (t) => t.project === project && t.status === "open" &&
+          this.depsSatisfied(t) && this.modeAllows(mode, t, name)
       );
       if (!task) return null;
     }
     task.status = "claimed"; task.owner = name; task.updatedAt = new Date().toISOString();
+    this.setAgentProject(name, project); // membership by participation
     this.emit({ type: "task", action: "claim", task, ts: task.updatedAt });
     log(`◂ task #${task.id} claimed by ${name}`);
     return task;
@@ -333,13 +453,15 @@ function buildServer(session) {
         account: z.string().max(64).optional().describe("Account/subscription this session bills to, e.g. 'max-personal', 'team-plan'."),
         cost: z.enum(["free", "low", "medium", "high"]).optional().describe("Relative cost tier of this session."),
         note: z.string().max(200).optional().describe("Anything else an operator should know."),
+        project: z.string().optional().describe("Project this session is working on (default 'default')."),
       },
     },
-    async ({ name, model, account, cost, note }) => {
+    async ({ name, model, account, cost, note, project }) => {
       const renamedFrom = session.agent;
       session.agent = name;
       const a = broker.ensure(name);
       a.lastSeen = Date.now();
+      if (project) broker.setAgentProject(name, project);
       const meta = Object.fromEntries(Object.entries({ model, account, cost, note }).filter(([, v]) => v != null));
       if (Object.keys(meta).length) broker.tag(name, meta);
       log(renamedFrom && renamedFrom !== name
@@ -515,11 +637,12 @@ function buildServer(session) {
         detail: z.string().optional().describe("Full instructions for the worker."),
         role: z.string().optional().describe("Restrict to a worker with this name; omit for anyone."),
         deps: z.array(z.number()).optional().describe("Task ids that must be 'done' before this unblocks."),
+        project: z.string().optional().describe("Project to post into (default 'default'). The project's mode governs how it can be claimed."),
       },
     },
-    async ({ title, detail, role, deps }) => {
+    async ({ title, detail, role, deps, project }) => {
       const from = requireName();
-      const task = broker.postTask({ from, title, detail, role, deps });
+      const task = broker.postTask({ from, title, detail, role, deps, project });
       return { content: [{ type: "text", text: `Posted task #${task.id} "${task.title}" (${task.status}).` }] };
     }
   );
@@ -529,11 +652,14 @@ function buildServer(session) {
     {
       title: "Claim a task",
       description: "Claim a task to work on. With no id, claims the next open task addressed to you (or unassigned) whose dependencies are met. Returns the task, or notes that none are available.",
-      inputSchema: { id: z.number().optional().describe("Specific task id; omit to take the next available.") },
+      inputSchema: {
+        id: z.number().optional().describe("Specific task id; omit to take the next available."),
+        project: z.string().optional().describe("Project to claim from (default 'default'). Claiming is enforced by the project's mode."),
+      },
     },
-    async ({ id }) => {
+    async ({ id, project }) => {
       const name = requireName();
-      const task = broker.claimTask(name, id);
+      const task = broker.claimTask(name, id, project ?? "default");
       return {
         content: [{ type: "text", text: task ? JSON.stringify(task, null, 2) : "(no claimable tasks right now)" }],
       };
@@ -586,6 +712,88 @@ function buildServer(session) {
       const name = requireName();
       const r = await broker.barrier(name, label, parties, (timeout_seconds ?? 120) * 1000);
       return { content: [{ type: "text", text: r.released ? `Barrier "${label}" released (${r.arrived}/${r.parties}).` : `Barrier "${label}" timed out (${r.arrived}/${r.parties}).` }] };
+    }
+  );
+
+  // ---- Stigmergic signals (swarm / ant-colony coordination) ----------------
+  server.registerTool(
+    "emit_signal",
+    {
+      title: "Emit a signal (pheromone)",
+      description: "Leave a decaying mark on a shared topic so the swarm coordinates indirectly. kind 'activate' reinforces a path; 'inhibit' suppresses it. Signals fade over time, so re-emit to keep a path alive.",
+      inputSchema: {
+        topic: z.string().describe("Signal topic, e.g. 'explore:path-a' or 'error:auth'."),
+        strength: z.number().min(0.1).max(100).optional().describe("How strong a mark to leave (default 1)."),
+        kind: z.enum(["activate", "inhibit"]).optional().describe("'activate' (default) reinforces; 'inhibit' suppresses."),
+        project: z.string().optional().describe("Project to scope the signal to (default 'default')."),
+      },
+    },
+    async ({ topic, strength, kind, project }) => {
+      const from = requireName();
+      const r = broker.emitSignal(from, project ?? "default", topic, strength ?? 1, kind ?? "activate");
+      return { content: [{ type: "text", text: `Signal "${topic}" → activate ${r.activate.toFixed(2)}, inhibit ${r.inhibit.toFixed(2)}, net ${r.net.toFixed(2)}.` }] };
+    }
+  );
+
+  server.registerTool(
+    "read_signals",
+    {
+      title: "Read signals (rolling attention)",
+      description: "Read current decayed signal strengths. Pass a topic to focus on just that one — agents should listen only to topics relevant to their specialization. Use the net value (activate − inhibit) and a threshold to decide whether to act.",
+      inputSchema: {
+        topic: z.string().optional().describe("Restrict to one topic; omit for all live signals."),
+        project: z.string().optional().describe("Project to read from (default 'default')."),
+      },
+    },
+    async ({ topic, project }) => {
+      broker.touch(session.agent);
+      const sigs = broker.readSignals(project ?? "default", topic);
+      return { content: [{ type: "text", text: sigs.length ? JSON.stringify(sigs, null, 2) : "(no live signals)" }] };
+    }
+  );
+
+  // ---- Projects (each project runs one agent structure / pattern) ----------
+  server.registerTool(
+    "create_project",
+    {
+      title: "Create a project",
+      description: "Create a project that runs a single agent structure (pattern), strictly enforced for its tasks. Modes: anarchy (anyone claims anything), hierarchy (role-gated), pipeline (dependency-ordered), auction (must be awarded), stigmergy (signal-driven). Default project is 'default' in anarchy.",
+      inputSchema: {
+        name: z.string().describe("Project name."),
+        mode: z.enum(["anarchy", "hierarchy", "pipeline", "auction", "stigmergy"]).describe("The agent structure this project executes under."),
+      },
+    },
+    async ({ name, mode }) => {
+      requireName();
+      const p = broker.createProject(name, mode);
+      return { content: [{ type: "text", text: `Project "${p.name}" created with "${p.mode}" structure. Scope tasks/signals to it with project:"${p.name}".` }] };
+    }
+  );
+
+  server.registerTool(
+    "projects",
+    {
+      title: "List projects",
+      description: "List projects with their agent structure (mode), status, and task stats.",
+      inputSchema: {},
+    },
+    async () => {
+      broker.touch(session.agent);
+      return { content: [{ type: "text", text: JSON.stringify(broker.projectList(), null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    "award_task",
+    {
+      title: "Award a task (auction)",
+      description: "In an auction-mode project, award a task to the winning bidder so they can claim it. No-op-ish elsewhere, but required before claim under auction.",
+      inputSchema: { id: z.number().describe("Task id."), agent: z.string().describe("Winning agent's name.") },
+    },
+    async ({ id, agent }) => {
+      requireName();
+      const t = broker.awardTask(id, agent);
+      return { content: [{ type: "text", text: `Task #${t.id} awarded to ${agent}.` }] };
     }
   );
 
@@ -662,6 +870,8 @@ app.get("/api/state", (req, res) => {
     threads: broker.threadList(),
     tasks: broker.taskList(),
     task_stats: broker.taskStats(),
+    projects: broker.projectList(),
+    signals: broker.readSignals(),
     messages: broker.history.slice(-limit).reverse(),
   });
 });
@@ -673,6 +883,22 @@ app.post("/api/control/broadcast", (req, res) => {
   const recipients = broker.route({ from: "supervisor", to: to || "*", text });
   log(`⌘ supervisor → ${to || "*"}: ${String(text).slice(0, 60)}`);
   res.json({ ok: true, recipients });
+});
+
+app.post("/api/control/assign", (req, res) => {
+  const { agent, project } = req.body || {};
+  if (!agent || !project) return res.status(400).json({ error: "agent and project required" });
+  broker.ensureProject(project);
+  const p = broker.setAgentProject(agent, project);
+  log(`⌘ supervisor assigned ${agent} → ${p}`);
+  res.json({ ok: true, agent, project: p });
+});
+
+app.post("/api/control/project", (req, res) => {
+  const { name, mode } = req.body || {};
+  if (!name) return res.status(400).json({ error: "name required" });
+  const p = broker.createProject(name, mode || "anarchy");
+  res.json({ ok: true, project: broker.projectInfo(p) });
 });
 
 app.post("/api/control/reset", (req, res) => {
@@ -729,8 +955,15 @@ app.get("/health", (_req, res) => res.json({ ok: true, agents: broker.roster() }
 app.get("/dashboard", (_req, res) => res.sendFile(path.join(__dirname, "public", "dashboard.html")));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.listen(PORT, HOST, () => {
+broker.ensureProject("default"); // so the dashboard always shows the default (anarchy) project
+
+const httpServer = app.listen(PORT, HOST, () => {
   console.error(`telex listening on http://${HOST}:${PORT}/mcp`);
   console.error(`telex home:        http://${HOST}:${PORT}/`);
   console.error(`telex dashboard:   http://${HOST}:${PORT}/dashboard`);
 });
+// Keep idle keep-alive sockets open long enough that blocking `wait` long-polls
+// and quiet sessions don't get their connection torn down prematurely.
+httpServer.keepAliveTimeout = 65000;
+httpServer.headersTimeout = 70000;
+httpServer.requestTimeout = 0; // allow long-held `wait` requests
